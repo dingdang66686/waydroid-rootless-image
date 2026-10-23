@@ -1,0 +1,9 @@
+rootfs/
+images/
+build/
+build-rootfs/
+out/
+prebuilts/
+*.tar
+__pycache__/
+*.pyc

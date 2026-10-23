@@ -1,0 +1,239 @@
+name: image
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths:
+      - build-rootfs.py
+      - build-rootfs.sh
+      - BUILD.md
+      - .github/workflows/image.yml
+  workflow_dispatch:
+    inputs:
+      package_url:
+        description: 'waydroid-image .pkg.tar.zst URL (empty: repository variable or pinned default)'
+        required: false
+        type: string
+      package_sha256:
+        description: 'package SHA-256 (empty: repository variable or pinned default)'
+        required: false
+        type: string
+      system_url:
+        description: 'direct system.img URL (raw ext4; set both system and vendor to use)'
+        required: false
+        type: string
+      vendor_url:
+        description: 'direct vendor.img URL (raw ext4)'
+        required: false
+        type: string
+      system_sha256:
+        description: 'optional system.img SHA-256'
+        required: false
+        type: string
+      vendor_sha256:
+        description: 'optional vendor.img SHA-256'
+        required: false
+        type: string
+      tag:
+        description: 'image tag (default 13)'
+        required: false
+        default: '13'
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      DEFAULT_PACKAGE_URL: 'https://us.cachyos.org/repo/x86_64/cachyos/waydroid-image-1:20.0.20260510-1-x86_64.pkg.tar.zst'
+      DEFAULT_PACKAGE_SHA256: 'f5a1238050d6e58184748143c86e35dd6ed5ae6dc3851f7a0dd83743d676d3b4'
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo apt-get clean
+          df -h /
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            podman e2fsprogs zstd curl file
+          # fuse2fs gives the fast extraction path; debugfs is the fallback.
+          sudo apt-get install -y --no-install-recommends fuse2fs || true
+          podman --version
+          (command -v fuse2fs || true)
+          (ls -l /dev/fuse || true)
+
+      - name: Fetch system.img and vendor.img
+        env:
+          IN_PACKAGE_URL: ${{ inputs.package_url }}
+          IN_PACKAGE_SHA256: ${{ inputs.package_sha256 }}
+          IN_SYSTEM_URL: ${{ inputs.system_url }}
+          IN_VENDOR_URL: ${{ inputs.vendor_url }}
+          IN_SYSTEM_SHA256: ${{ inputs.system_sha256 }}
+          IN_VENDOR_SHA256: ${{ inputs.vendor_sha256 }}
+          VAR_PACKAGE_URL: ${{ vars.WAYDROID_IMAGE_PACKAGE_URL }}
+          VAR_PACKAGE_SHA256: ${{ vars.WAYDROID_IMAGE_PACKAGE_SHA256 }}
+          VAR_SYSTEM_URL: ${{ vars.WAYDROID_SYSTEM_URL }}
+          VAR_VENDOR_URL: ${{ vars.WAYDROID_VENDOR_URL }}
+          VAR_SYSTEM_SHA256: ${{ vars.WAYDROID_SYSTEM_SHA256 }}
+          VAR_VENDOR_SHA256: ${{ vars.WAYDROID_VENDOR_SHA256 }}
+          SEC_PACKAGE_URL: ${{ secrets.WAYDROID_IMAGE_PACKAGE_URL }}
+          SEC_PACKAGE_SHA256: ${{ secrets.WAYDROID_IMAGE_PACKAGE_SHA256 }}
+          SEC_SYSTEM_URL: ${{ secrets.WAYDROID_SYSTEM_URL }}
+          SEC_VENDOR_URL: ${{ secrets.WAYDROID_VENDOR_URL }}
+          SEC_SYSTEM_SHA256: ${{ secrets.WAYDROID_SYSTEM_SHA256 }}
+          SEC_VENDOR_SHA256: ${{ secrets.WAYDROID_VENDOR_SHA256 }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p images
+
+          system_url="${IN_SYSTEM_URL:-${VAR_SYSTEM_URL:-${SEC_SYSTEM_URL:-}}}"
+          vendor_url="${IN_VENDOR_URL:-${VAR_VENDOR_URL:-${SEC_VENDOR_URL:-}}}"
+          system_sha="${IN_SYSTEM_SHA256:-${VAR_SYSTEM_SHA256:-${SEC_SYSTEM_SHA256:-}}}"
+          vendor_sha="${IN_VENDOR_SHA256:-${VAR_VENDOR_SHA256:-${SEC_VENDOR_SHA256:-}}}"
+
+          if [[ -n "$system_url" || -n "$vendor_url" ]]; then
+            if [[ -z "$system_url" || -z "$vendor_url" ]]; then
+              echo "Set both system and vendor URLs, or neither (package mode)." >&2
+              exit 1
+            fi
+            echo "Using direct system/vendor URLs"
+            curl -fL --retry 3 --retry-delay 5 -o images/system.img "$system_url"
+            curl -fL --retry 3 --retry-delay 5 -o images/vendor.img "$vendor_url"
+            [[ -z "$system_sha" ]] || printf '%s  %s\n' "$system_sha" images/system.img | sha256sum -c -
+            [[ -z "$vendor_sha" ]] || printf '%s  %s\n' "$vendor_sha" images/vendor.img | sha256sum -c -
+            if [[ -n "$system_sha" ]]; then echo "SYS_SHA=$system_sha" >> "$GITHUB_ENV"; fi
+            if [[ -n "$vendor_sha" ]]; then echo "VENDOR_SHA=$vendor_sha" >> "$GITHUB_ENV"; fi
+          else
+            pkg_url="${IN_PACKAGE_URL:-${VAR_PACKAGE_URL:-${SEC_PACKAGE_URL:-$DEFAULT_PACKAGE_URL}}}"
+            pkg_sha="${IN_PACKAGE_SHA256:-${VAR_PACKAGE_SHA256:-${SEC_PACKAGE_SHA256:-}}}"
+            if [[ -z "$pkg_sha" && "$pkg_url" == "$DEFAULT_PACKAGE_URL" ]]; then
+              pkg_sha="$DEFAULT_PACKAGE_SHA256"
+            fi
+
+            echo "Using image package: $pkg_url"
+            pkg="$RUNNER_TEMP/waydroid-image.pkg.tar.zst"
+            curl -fL --retry 3 --retry-delay 5 -o "$pkg" "$pkg_url"
+            if [[ -n "$pkg_sha" ]]; then
+              printf '%s  %s\n' "$pkg_sha" "$pkg" | sha256sum -c -
+            else
+              echo "WARNING: no package SHA-256 supplied; skipping verification" >&2
+            fi
+
+            extract_dir="$(mktemp -d)"
+            tar --zstd -xf "$pkg" -C "$extract_dir" \
+              usr/share/waydroid-extra/images/system.img \
+              usr/share/waydroid-extra/images/vendor.img
+            cp "$extract_dir/usr/share/waydroid-extra/images/system.img" images/system.img
+            cp "$extract_dir/usr/share/waydroid-extra/images/vendor.img" images/vendor.img
+            rm -rf "$extract_dir" "$pkg"
+          fi
+
+          ls -lh images
+          file images/system.img images/vendor.img
+          df -h /
+
+      - name: Build patched rootfs
+        run: |
+          set -euo pipefail
+          args=(--system images/system.img --vendor images/vendor.img
+                --out out --tar --force)
+          if [[ -n "${SYS_SHA:-}" ]]; then args+=(--sha256-system "$SYS_SHA"); fi
+          if [[ -n "${VENDOR_SHA:-}" ]]; then args+=(--sha256-vendor "$VENDOR_SHA"); fi
+          ./build-rootfs.sh "${args[@]}"
+          python3 -m json.tool out/manifest.json
+          du -sh out/rootfs out/rootfs.tar
+
+      - name: Import and push to GHCR
+        env:
+          IN_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          tag="${IN_TAG:-13}"
+          if [[ ! "$tag" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "Invalid image tag: $tag" >&2
+            exit 1
+          fi
+          image_repo="ghcr.io/${GITHUB_REPOSITORY,,}"
+          short="${GITHUB_SHA:0:7}"
+
+          changes=(
+            --change "LABEL org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+            --change "LABEL org.opencontainers.image.revision=${GITHUB_SHA}"
+            --change "LABEL org.opencontainers.image.version=${tag}"
+            --change "LABEL org.opencontainers.image.title=waydroid-rootless-image"
+            --change "LABEL org.opencontainers.image.description=Rootless Waydroid Android 13 rootfs"
+          )
+          sudo podman import "${changes[@]}" out/rootfs.tar "$image_repo:$tag"
+          sudo podman tag "$image_repo:$tag" "$image_repo:sha-$short"
+
+          tags=("$tag" "sha-$short")
+          if [[ "$GITHUB_REF" == "refs/heads/main" && "$tag" != "latest" ]]; then
+            sudo podman tag "$image_repo:$tag" "$image_repo:latest"
+            tags+=("latest")
+          fi
+
+          printf '%s' "$GH_TOKEN" | sudo podman login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for t in "${tags[@]}"; do
+            sudo podman push "$image_repo:$t"
+          done
+
+          echo "IMAGE_REF=$image_repo:$tag" >> "$GITHUB_ENV"
+          printf 'IMAGE_TAGS=%s\n' "${tags[*]}" >> "$GITHUB_ENV"
+
+      - name: Make the GHCR package public
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pkg="${GITHUB_REPOSITORY#*/}"
+          gh api --method PATCH \
+            -H 'Accept: application/vnd.github+json' \
+            "/user/packages/container/${pkg}" \
+            -f visibility=public
+
+      - name: Write summary
+        run: |
+          set -euo pipefail
+          {
+            echo "### waydroid-rootless-image"
+            echo
+            echo "- image: \`${IMAGE_REF:-unknown}\`"
+            echo "- tags: \`${IMAGE_TAGS:-unknown}\`"
+            echo "- revision: \`${GITHUB_SHA}\`"
+            echo
+            echo "<details><summary>manifest.json</summary>"
+            echo
+            echo '```json'
+            cat out/manifest.json
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: rootfs-manifest
+          path: out/manifest.json
