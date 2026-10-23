@@ -91,9 +91,9 @@ For a manual run, the same values are available as `workflow_dispatch` inputs
 variables, then secrets, then the pinned default.
 
 The workflow needs the repository's `GITHUB_TOKEN` with `packages: write`; it
-logs in to `ghcr.io` as `${{ github.actor }}`.  GHCR packages are private by
-default; the workflow makes a best-effort attempt to switch the package to
-public, but you can also change visibility once in the package settings.
+logs in to `ghcr.io` as `${{ github.actor }}`.  The GHCR package follows the
+repository visibility (public here); if it is ever switched to private, set it
+public once in the package settings or `podman login ghcr.io` before pulling.
 
 The CachyOS package is GPL-3.0-only; the image contains LineageOS/Waydroid
 artefacts from that package.  Check the licensing that applies to your

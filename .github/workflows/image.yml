@@ -59,7 +59,7 @@ jobs:
 
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Free disk space
         run: |
@@ -201,18 +201,6 @@ jobs:
           echo "IMAGE_REF=$image_repo:$tag" >> "$GITHUB_ENV"
           printf 'IMAGE_TAGS=%s\n' "${tags[*]}" >> "$GITHUB_ENV"
 
-      - name: Make the GHCR package public
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          pkg="${GITHUB_REPOSITORY#*/}"
-          gh api --method PATCH \
-            -H 'Accept: application/vnd.github+json' \
-            "/user/packages/container/${pkg}" \
-            -f visibility=public
-
       - name: Write summary
         run: |
           set -euo pipefail
@@ -233,7 +221,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload manifest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rootfs-manifest
           path: out/manifest.json
