@@ -1,5 +1,7 @@
 # waydroid-rootless-image
 
+[![image](https://github.com/dingdang66686/waydroid-rootless-image/actions/workflows/image.yml/badge.svg)](https://github.com/dingdang66686/waydroid-rootless-image/actions/workflows/image.yml)
+
 Build and publish the bootable OCI image for the
 [rootless Waydroid podman backend](https://github.com/dingdang66686/waydroid-rootless).
 
