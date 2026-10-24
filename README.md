@@ -16,8 +16,7 @@ out/
 ```
 
 The contract is documented in [BUILD.md](BUILD.md).  The published image is the
-**plain patched x86_64 rootfs**; `libndk`/ARM translation is an external overlay,
-not part of this build.
+plain patched rootfs; local overlays are applied by the runtime, not this build.
 
 The runtime lives in
 [dingdang66686/waydroid-rootless](https://github.com/dingdang66686/waydroid-rootless).
@@ -57,10 +56,8 @@ Use `--sha256-system` / `--sha256-vendor` to pin the inputs, and
 `SOURCE_DATE_EPOCH` to control the tar mtime.  Both raw and Android-sparse ext4
 images are accepted (`simg2img` is used for sparse inputs).
 
-The legacy `extract.sh` + `build.sh` + `Containerfile` chain is kept as an
-optional image/ARM example; the CI and the supported path use
-`build-rootfs.{py,sh}`.  The ARM prebuilts are proprietary and are not committed
-or built here.
+The legacy `extract.sh` + `build.sh` + `Containerfile` files are kept for
+reference; the CI and the supported path use `build-rootfs.{py,sh}`.
 
 ## GitHub Actions / GHCR
 
@@ -105,9 +102,8 @@ distribution before publishing the image publicly.
 
 - `build-rootfs.py` / `build-rootfs.sh` — supported builder
 - `BUILD.md` — input/output/manifest contract
-- `extract.sh` — optional legacy plain-rootfs extraction
-- `build.sh`, `Containerfile`, `fetch-prebuilts.sh` — optional legacy image/ARM
-  example (not used by CI)
+- `extract.sh`, `build.sh`, `Containerfile`, `fetch-prebuilts.sh` — legacy/manual
+  examples (not used by CI)
 - `.github/workflows/image.yml` — build + GHCR publish
 
 ## License
